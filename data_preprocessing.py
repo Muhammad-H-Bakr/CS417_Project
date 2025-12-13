@@ -8,7 +8,12 @@ training/validation/test generators for model training.
 
 
 import os
+import shutil
+import pickle
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+import tensorflow as tf
 import subprocess
 import warnings
 warnings.filterwarnings("ignore")
@@ -91,3 +96,156 @@ def ensure_dataset_exists():
         except Exception as e:
             print(f" Error cloning dataset: {e}")
             return False
+
+# DATASET ORGANIZATION
+
+def copy_image(src_dst):
+    """Helper function to copy image files."""
+    src, dst = src_dst
+    try:
+        shutil.copy(src, dst)
+    except Exception as e:
+        print(f" {e}")
+
+
+def create_multi_fruit_dataset():
+    """Organize dataset into fresh/rotten categories for each fruit."""
+    print("\nCreating multi-fruit dataset (OPTIMIZED)")
+
+    # Reset output directory
+    if os.path.exists(OUTPUT_PATH):
+        shutil.rmtree(OUTPUT_PATH)
+        print(" Cleaned existing folder")
+
+    # Create folder structure
+    for split in ['Training', 'Test']:
+        for fruit in FRUIT_CATEGORIES:
+            for state in ['fresh', 'rotten']:
+                os.makedirs(os.path.join(OUTPUT_PATH, split, f"{fruit.capitalize()}_{state}"))
+
+    print(" Folder structure created from FRUIT_CATEGORIES")
+
+    total_copied = 0
+
+    for split in ['Training', 'Test']:
+        print(f"\n Processing: {split}")
+        split_path = Path(ORIGINAL_DATASET_PATH) / split
+
+        if not split_path.exists():
+            print(f" Split not found: {split_path}")
+            continue
+
+        all_dirs = [d for d in split_path.iterdir() if d.is_dir()]
+        tasks = []
+
+        for fruit in FRUIT_CATEGORIES:
+            print(f"\n Processing fruit: {fruit.capitalize()}")
+
+            valid_dirs = [d for d in all_dirs if d.name.startswith(fruit.capitalize())]
+            print(f"   Found {len(valid_dirs)} classes")
+
+            for class_dir in valid_dirs:
+                images = list(class_dir.glob("*.jpg")) + \
+                         list(class_dir.glob("*.jpeg")) + \
+                         list(class_dir.glob("*.png"))
+
+                # Determine if rotten or fresh
+                if class_dir.name in FRUIT_CATEGORIES[fruit]['rotten']:
+                    dest_class = f"{fruit.capitalize()}_rotten"
+                else:
+                    dest_class = f"{fruit.capitalize()}_fresh"
+
+                dest_folder = Path(OUTPUT_PATH) / split / dest_class
+
+                print(f"    {class_dir.name} → {dest_class} ({len(images)} images)")
+
+                for img in images:
+                    dst = dest_folder / f"{class_dir.name}_{img.name}"
+                    tasks.append((str(img), str(dst)))
+
+        print(f"\n Copying {len(tasks)} images for {split}...\n")
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            list(tqdm(pool.map(copy_image, tasks), total=len(tasks), desc=split, unit="img"))
+
+        total_copied += len(tasks)
+        print(f"{split} finished: {len(tasks)} images copied")
+
+    # Verification
+    print("\n Verifying structure...\n")
+    grand_total = 0
+
+    for split in ['Training', 'Test']:
+        split_path = Path(OUTPUT_PATH) / split
+        split_total = 0
+
+        for folder in split_path.iterdir():
+            if folder.is_dir():
+                count = len(list(folder.glob("*.jpg"))) + \
+                        len(list(folder.glob("*.png"))) + \
+                        len(list(folder.glob("*.jpeg")))
+
+                print(f"  {folder.name}: {count}")
+                split_total += count
+
+        print(f"{split} TOTAL: {split_total}\n")
+        grand_total += split_total
+
+    print(f"\nALL DONE: {grand_total} images copied")
+    print(f"Dataset located at: {OUTPUT_PATH}")
+
+    return OUTPUT_PATH
+
+# Data Generators
+TRAIN_DIR = os.path.join(OUTPUT_PATH, 'Training')
+TEST_DIR = os.path.join(OUTPUT_PATH, 'Test')
+def create_generators():
+    """
+    Builds training, validation, and test data generators.
+    """
+    # Data augmentation for training
+    train_datagen = tf.keras.preprocessing.image.ImageDataGenerator(
+        rescale=1.0 / 255,
+        rotation_range=20,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        zoom_range=0.2,
+        horizontal_flip=True,
+        validation_split=0.2
+    )
+
+    test_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1.0 / 255)
+    print(f" Training directory: {TRAIN_DIR}")
+    print(f" Test directory: {TEST_DIR}")
+    train_gen = train_datagen.flow_from_directory(
+        TRAIN_DIR,
+        target_size=IMG_SIZE,
+        batch_size=BATCH_SIZE,
+        class_mode="categorical",
+        subset="training",
+        shuffle=True
+    )
+
+    val_gen = train_datagen.flow_from_directory(
+        TRAIN_DIR,
+        target_size=IMG_SIZE,
+        batch_size=BATCH_SIZE,
+        class_mode="categorical",
+        subset="validation",
+        shuffle=True
+    )
+
+    test_gen = test_datagen.flow_from_directory(
+        TEST_DIR,
+        target_size=IMG_SIZE,
+        batch_size=BATCH_SIZE,
+        class_mode="categorical",
+        shuffle=False
+    )
+
+    print(f"Classes: {train_gen.class_indices}")
+    print(f" Training samples: {train_gen.samples}")
+    print(f" Validation samples: {val_gen.samples}")
+    print(f" Test samples: {test_gen.samples}")
+    return train_gen, val_gen, test_gen
+
