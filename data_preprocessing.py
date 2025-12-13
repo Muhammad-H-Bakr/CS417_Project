@@ -249,3 +249,53 @@ def create_generators():
     print(f" Test samples: {test_gen.samples}")
     return train_gen, val_gen, test_gen
 
+
+# Save Config
+
+def save_config(train_gen, val_gen, test_gen):
+    """Saves dataset configuration for the train script."""
+
+    config = {
+        "img_size": IMG_SIZE,
+        "batch_size": BATCH_SIZE,
+        'validation_split': VALIDATION_SPLIT,
+        'train_dir': TRAIN_DIR,
+        'test_dir': TEST_DIR,
+        "num_classes": len(train_gen.class_indices),
+        "class_indices": train_gen.class_indices,
+        "train_samples": train_gen.samples,
+        "val_samples": val_gen.samples,
+        "test_samples": test_gen.samples
+    }
+
+    with open(DATA_CONFIG_FILE, "wb") as f:
+        pickle.dump(config, f)
+
+    print(f"Configuration saved to  {DATA_CONFIG_FILE}")
+    return config
+
+
+# Main Execution
+
+
+if __name__ == "__main__":
+
+    print("Starting dataset preparation...\n")
+    print("\nSTEP 1: DATASET DOWNLOAD & SETUP")
+    dataset_ready = ensure_dataset_exists()
+    if dataset_ready:
+        print("\nSTEP 2: DATASET ORGANIZATION")
+        dataset_path = create_multi_fruit_dataset()
+
+        print("\nSTEP 3: DATA GENERATORS SETUP")
+        train_gen, val_gen, test_gen = create_generators()
+
+        print("\nSTEP 4: SAVE CONFIGURATION")
+        config = save_config(train_gen, val_gen, test_gen)
+
+        print("\nSummary:")
+        print(f"Classes: {config['num_classes']}")
+        print(f"Training samples: {config['train_samples']}")
+        print(f"Validation samples: {config['val_samples']}")
+        print(f"Test samples: {config['test_samples']}")
+        print(f"\n Next step: Run 'model_training.py'")
